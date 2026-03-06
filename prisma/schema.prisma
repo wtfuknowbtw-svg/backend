@@ -1,0 +1,73 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Business {
+  id          String   @id @default(cuid())
+  phone       String   @unique
+  name        String?
+  type        String?  // "kirana", "clinic", "workshop", etc.
+  language    String   @default("hi") // "hi", "en", "mr", etc.
+  gstin       String?
+  createdAt   DateTime @default(now())
+  
+  transactions Transaction[]
+  customers    Customer[]
+  subscription Subscription?
+}
+
+model Customer {
+  id          String   @id @default(cuid())
+  businessId  String
+  name        String
+  phone       String?
+  totalUdhar  Float    @default(0)
+  createdAt   DateTime @default(now())
+  
+  business     Business      @relation(fields: [businessId], references: [id])
+  transactions Transaction[]
+}
+
+model Transaction {
+  id              String   @id @default(cuid())
+  businessId      String
+  customerId      String?
+  itemName        String?
+  quantity        Float?
+  unit            String?
+  price           Float
+  type            String   // "credit", "cash", "expense"
+  date            DateTime @default(now())
+  aiConfidence    Float?   // 0-100, null if manually entered
+  sourceType      String?  // "ocr", "voice", "manual"
+  sourceImageUrl  String?  // original image if from OCR
+  rawText         String?  // original voice/ocr text
+  isConfirmed     Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  
+  business  Business  @relation(fields: [businessId], references: [id])
+  customer  Customer? @relation(fields: [customerId], references: [id])
+}
+
+model Subscription {
+  id         String   @id @default(cuid())
+  businessId String   @unique
+  plan       String   @default("free") // "free", "basic", "pro"
+  endsAt     DateTime?
+  createdAt  DateTime @default(now())
+  
+  business Business @relation(fields: [businessId], references: [id])
+}
+
+model Otp {
+  id        String   @id @default(cuid())
+  phone     String   @unique
+  code      String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
