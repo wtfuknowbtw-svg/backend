@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { generateToken } from "@/lib/jwt";
 import { verifyOTPWithSupabase } from "@/lib/supabase";
+import { prisma } from "@/lib/prisma";
 
 const loginSchema = z.object({
     phone: z.string().min(10).max(15),
@@ -43,8 +44,24 @@ export async function POST(request: Request) {
             otpValid = true; // Master OTP always valid
         }
 
-        // Find or create business (for demo - in production use proper DB)
-        let business = { id: "demo-business", phone, name: "Demo Business" };
+        // Find or create business in database
+        let business = await prisma.business.findUnique({
+            where: { phone },
+        });
+
+        if (!business) {
+            // Create new business if doesn't exist
+            business = await prisma.business.create({
+                data: { 
+                    phone,
+                    name: null, // Can be updated later
+                    language: "hi", // Default to Hindi
+                },
+            });
+            console.log(`Created new business for phone: ${phone}, ID: ${business.id}`);
+        } else {
+            console.log(`Found existing business for phone: ${phone}, ID: ${business.id}`);
+        }
         
         console.log("Login successful for business ID:", business.id);
         

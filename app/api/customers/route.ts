@@ -28,29 +28,25 @@ export async function GET(request: NextRequest) {
                     transactions: {
                         orderBy: { date: 'desc' },
                         take: 50
-                    },
-                    _count: {
-                        select: { transactions: true }
                     }
                 }
             });
-            if (!customer) return NextResponse.json({ error: "Customer not found" }, { status: 404 });
-            return NextResponse.json({ data: customer });
-        }
 
-        const customers = await prisma.customer.findMany({
-            where: { businessId },
-            orderBy: { name: "asc" },
-            include: {
-                _count: {
-                    select: { transactions: true }
-                }
+            if (!customer) {
+                return NextResponse.json({ error: "Customer not found" }, { status: 404 });
             }
-        });
 
-        return NextResponse.json({ data: customers });
+            return NextResponse.json({ data: customer });
+        } else {
+            const customers = await prisma.customer.findMany({
+                where: { businessId },
+                orderBy: { createdAt: 'desc' }
+            });
+
+            return NextResponse.json({ data: customers });
+        }
     } catch (error) {
-        console.error("Customers GET Error:", error);
+        console.error("Customers GET error:", error);
         return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
     }
 }
@@ -70,6 +66,7 @@ export async function POST(request: NextRequest) {
             data: {
                 ...parsed,
                 businessId: user.businessId,
+                totalUdhar: 0,
             },
         });
 

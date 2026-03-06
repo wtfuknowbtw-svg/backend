@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
         include: { customer: { select: { name: true } } }
     });
 
-    const formatted = transactions.map(t => ({
+    const formatted = transactions.map((t: any) => ({
         ...t,
         customerName: t.customer?.name || "Cash Entry",
     }));
@@ -93,14 +93,26 @@ export async function POST(request: NextRequest) {
             });
         }
 
-        return NextResponse.json({ data: transaction, message: "Transaction created successfully" });
-    } catch (error) {
+        return NextResponse.json({
+            success: true,
+            data: {
+                ...transaction,
+                customerName: parsed.customerName || "Cash Entry",
+            }
+        });
+
+    } catch (error: any) {
+        console.error("Transaction creation error:", error);
         if (error instanceof z.ZodError) {
-            return NextResponse.json({ error: "Validation Error", details: error.flatten().fieldErrors }, { status: 400 });
+            return NextResponse.json(
+                { error: "Validation Error", details: error.flatten().fieldErrors },
+                { status: 400 }
+            );
         }
-        return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+        return NextResponse.json({ error: "Failed to create transaction" }, { status: 500 });
     }
 }
+
 export async function PUT(request: NextRequest) {
     const { user, error } = await verifyJWT(request);
     if (!user) {
@@ -117,35 +129,21 @@ export async function PUT(request: NextRequest) {
 
         const parsed = transactionSchema.partial().parse(updateData);
 
-        // Get old transaction to calculate udhar change
-        const oldTxn = await prisma.transaction.findUnique({
-            where: { id, businessId: user.businessId },
+        // Get the transaction to update
+        const existingTransaction = await prisma.transaction.findFirst({
+            where: { id, businessId: user.businessId }
         });
 
-        if (!oldTxn) {
+        if (!existingTransaction) {
             return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
         }
 
-        const transaction = await prisma.transaction.update({
+        // Update the transaction with Prisma
+        const updatedTransaction = await prisma.transaction.update({
             where: { id },
-            data: parsed,
+            data: parsed
         });
-
-        // Re-calculate Udhar if price or type changed
-        if (oldTxn.customerId && (oldTxn.type === "credit" || oldTxn.type === "cash" || parsed.type === "credit" || parsed.type === "cash" || parsed.price !== undefined)) {
-            const oldPrice = oldTxn.type === "credit" ? oldTxn.price : oldTxn.type === "cash" ? -oldTxn.price : 0;
-            const newPrice = (parsed.type || oldTxn.type) === "credit" ? (parsed.price ?? oldTxn.price) : (parsed.type || oldTxn.type) === "cash" ? -(parsed.price ?? oldTxn.price) : 0;
-
-            const diff = newPrice - oldPrice;
-            if (diff !== 0) {
-                await prisma.customer.update({
-                    where: { id: oldTxn.customerId },
-                    data: { totalUdhar: { increment: diff } }
-                });
-            }
-        }
-
-        return NextResponse.json({ data: transaction, message: "Transaction updated successfully" });
+        return NextResponse.json({ data: updatedTransaction, message: "Transaction updated successfully" });
     } catch (error) {
         if (error instanceof z.ZodError) {
             return NextResponse.json({ error: "Validation Error", details: error.flatten().fieldErrors }, { status: 400 });
@@ -168,27 +166,19 @@ export async function DELETE(request: NextRequest) {
             return NextResponse.json({ error: "Transaction ID is required" }, { status: 400 });
         }
 
-        const transaction = await prisma.transaction.findUnique({
-            where: { id, businessId: user.businessId },
+        // Get the transaction to delete
+        const existingTransaction = await prisma.transaction.findFirst({
+            where: { id, businessId: user.businessId }
         });
 
-        if (!transaction) {
+        if (!existingTransaction) {
             return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
         }
 
+        // Delete the transaction with Prisma
         await prisma.transaction.delete({
-            where: { id },
+            where: { id }
         });
-
-        // Sync Udhar
-        if (transaction.customerId && (transaction.type === "credit" || transaction.type === "cash")) {
-            const amountChange = transaction.type === "credit" ? -transaction.price : transaction.price;
-            await prisma.customer.update({
-                where: { id: transaction.customerId },
-                data: { totalUdhar: { increment: amountChange } }
-            });
-        }
-
         return NextResponse.json({ message: "Transaction deleted successfully" });
     } catch (error) {
         return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
