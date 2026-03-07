@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { NextRequest } from "next/server";
 import { z } from "zod";
-import Groq from "groq-sdk";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { verifyJWT, unauthorizedResponse } from "@/middleware/auth";
 
 const ocrSchema = z.object({
@@ -43,8 +43,8 @@ Output format (JSON array only, no explanation):
 `;
 
 export async function POST(request: NextRequest) {
-    console.log('GROQ KEY EXISTS:', !!process.env.GROQ_API_KEY)
-    console.log('GROQ KEY VALUE:', process.env.GROQ_API_KEY?.substring(0, 10))
+    console.log('GEMINI KEY EXISTS:', !!process.env.GEMINI_API_KEY)
+    console.log('GEMINI KEY VALUE:', process.env.GEMINI_API_KEY?.substring(0, 10))
     
     // Debug: Print authorization header
     const authHeader = request.headers.get('authorization');
@@ -64,17 +64,18 @@ export async function POST(request: NextRequest) {
         const body = await request.json();
         const { imageUrl, base64Image, transcript } = ocrSchema.parse(body);
 
-        const apiKey = process.env.GROQ_API_KEY;
-        console.log('OCR Request - Groq API Key exists:', !!apiKey);
+        const apiKey = process.env.GEMINI_API_KEY;
+        console.log('OCR Request - Gemini API Key exists:', !!apiKey);
         
         if (!apiKey) {
-            console.error('OCR Error - Groq API key not configured in environment');
+            console.error('OCR Error - Gemini API key not configured in environment');
             return NextResponse.json({ 
-                error: "Groq API key not configured on server. Please contact administrator." 
+                error: "Gemini API key not configured on server. Please contact administrator." 
             }, { status: 500 });
         }
 
-        const groq = new Groq({ apiKey });
+        const genAI = new GoogleGenerativeAI(apiKey);
+        const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
         let contentParts: any;
 
@@ -112,40 +113,21 @@ export async function POST(request: NextRequest) {
                 return NextResponse.json({ error: "No image or transcript data provided" }, { status: 400 });
             }
 
-            // For Groq vision model, we need to send the image as a data URL
-            const imageDataUrl = `data:${mimeType};base64,${base64Data}`;
+            // For Gemini vision model, we need to send the image as inlineData
             contentParts = [
+                OCR_PROMPT,
                 {
-                    type: "text",
-                    text: "Extract transaction data from this image. Look for customer names, items, quantities, prices, and transaction types (cash/credit/expense)."
+                    inlineData: {
+                        data: base64Data,
+                        mimeType: mimeType,
+                    },
                 },
-                {
-                    type: "image_url",
-                    image_url: {
-                        url: imageDataUrl
-                    }
-                }
             ];
         }
 
-        const result = await groq.chat.completions.create({
-            messages: [
-                {
-                    role: "system",
-                    content: OCR_PROMPT
-                },
-                {
-                    role: "user",
-                    content: contentParts
-                }
-            ],
-            model: "llama-3.2-90b-vision-preview"
-        }).catch((error) => {
-            console.error('Groq API Error:', error);
-            throw error;
-        });
-
-        const text = result.choices[0]?.message?.content || '';
+        const result = await model.generateContent(contentParts);
+        const response = await result.response;
+        const text = response.text();
 
         // Clean up JSON response if present
         const cleanText = text.replace(/```json/g, "").replace(/```/g, "").trim();
