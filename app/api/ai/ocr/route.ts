@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { NextRequest } from "next/server";
 import { z } from "zod";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import Groq from "groq-sdk";
 import { verifyJWT, unauthorizedResponse } from "@/middleware/auth";
 
 const ocrSchema = z.object({
@@ -12,7 +12,7 @@ const ocrSchema = z.object({
     message: "Either imageUrl, base64Image, or transcript must be provided",
 });
 
-// Prompt for Gemini
+// Prompt for OCR AI
 const OCR_PROMPT = `
 You are a transaction parser for Indian small business accounting.
 Extract ALL transactions from the provided input (image text or voice transcript).
@@ -43,9 +43,20 @@ Output format (JSON array only, no explanation):
 `;
 
 export async function POST(request: NextRequest) {
+    console.log('GROQ KEY EXISTS:', !!process.env.GROQ_API_KEY)
+    console.log('GROQ KEY VALUE:', process.env.GROQ_API_KEY?.substring(0, 10))
+    
+    // Debug: Print authorization header
+    const authHeader = request.headers.get('authorization');
+    console.log('OCR Request - Authorization Header:', authHeader);
+    
     // Verify JWT token
     const { user, error } = await verifyJWT(request);
+    console.log('OCR JWT Verification - User:', user);
+    console.log('OCR JWT Verification - Error:', error);
+    
     if (!user) {
+        console.error('OCR JWT Failed - Full Error:', error);
         return unauthorizedResponse(error || "Unauthorized");
     }
 
@@ -53,19 +64,25 @@ export async function POST(request: NextRequest) {
         const body = await request.json();
         const { imageUrl, base64Image, transcript } = ocrSchema.parse(body);
 
-        const apiKey = process.env.GEMINI_API_KEY;
+        const apiKey = process.env.GROQ_API_KEY;
+        console.log('OCR Request - Groq API Key exists:', !!apiKey);
+        
         if (!apiKey) {
-            return NextResponse.json({ error: "Gemini API key not configured" }, { status: 500 });
+            console.error('OCR Error - Groq API key not configured in environment');
+            return NextResponse.json({ 
+                error: "Groq API key not configured on server. Please contact administrator." 
+            }, { status: 500 });
         }
 
-        const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const groq = new Groq({ apiKey });
 
-        let contentParts: any[] = [OCR_PROMPT];
+        let contentParts: any;
 
         if (transcript) {
-            contentParts.push(`Here is the voice transcript: "${transcript}"`);
+            // For text input, use the transcript directly
+            contentParts = `Here is the voice transcript: "${transcript}"`;
         } else {
+            // Process images with vision model
             let base64Data = base64Image;
             let mimeType = "image/jpeg";
 
@@ -85,7 +102,6 @@ export async function POST(request: NextRequest) {
             if (base64Data && base64Data.startsWith('data:image')) {
                 const parts = base64Data.split(',');
                 if (parts.length > 1) {
-                    // e.g. "data:image/png;base64,"
                     const mimeMatch = parts[0].match(/:(.*?);/);
                     if (mimeMatch) mimeType = mimeMatch[1];
                     base64Data = parts[1];
@@ -96,19 +112,42 @@ export async function POST(request: NextRequest) {
                 return NextResponse.json({ error: "No image or transcript data provided" }, { status: 400 });
             }
 
-            contentParts.push({
-                inlineData: {
-                    data: base64Data,
-                    mimeType,
+            // For Groq vision model, we need to send the image as a data URL
+            const imageDataUrl = `data:${mimeType};base64,${base64Data}`;
+            contentParts = [
+                {
+                    type: "text",
+                    text: "Extract transaction data from this image. Look for customer names, items, quantities, prices, and transaction types (cash/credit/expense)."
                 },
-            });
+                {
+                    type: "image_url",
+                    image_url: {
+                        url: imageDataUrl
+                    }
+                }
+            ];
         }
 
-        const result = await model.generateContent(contentParts);
-        const response = await result.response;
-        const text = response.text();
+        const result = await groq.chat.completions.create({
+            messages: [
+                {
+                    role: "system",
+                    content: OCR_PROMPT
+                },
+                {
+                    role: "user",
+                    content: contentParts
+                }
+            ],
+            model: "llama-3.2-90b-vision-preview"
+        }).catch((error) => {
+            console.error('Groq API Error:', error);
+            throw error;
+        });
 
-        // Clean up Gemini's markdown wrapper if present
+        const text = result.choices[0]?.message?.content || '';
+
+        // Clean up JSON response if present
         const cleanText = text.replace(/```json/g, "").replace(/```/g, "").trim();
 
         let parsedData;
