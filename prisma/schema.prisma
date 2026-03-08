@@ -37,6 +37,8 @@ model Transaction {
   id              String   @id @default(cuid())
   businessId      String
   customerId      String?
+  customerName    String?
+  customerPhone   String?
   itemName        String?
   quantity        Float?
   unit            String?

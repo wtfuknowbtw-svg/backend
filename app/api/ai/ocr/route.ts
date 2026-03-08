@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
         }
 
         const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
         let contentParts: any;
 
@@ -73,16 +73,27 @@ export async function POST(request: NextRequest) {
             let base64Data = base64Image;
             let mimeType = "image/jpeg";
 
+            console.log('OCR - Processing image, base64Image provided:', !!base64Image);
+            console.log('OCR - Base64Image length:', base64Image?.length || 0);
+
             if (imageUrl) {
                 // Fetch the image as arrayBuffer
+                console.log('OCR - Fetching image from URL:', imageUrl);
                 const imageResp = await fetch(imageUrl);
+                console.log('OCR - Image response status:', imageResp.status);
+                console.log('OCR - Image response headers:', Object.fromEntries(imageResp.headers.entries()));
+                
                 if (!imageResp.ok) {
+                    console.error('OCR - Failed to download image, status:', imageResp.status);
                     return NextResponse.json({ error: "Failed to download image" }, { status: 400 });
                 }
                 const arrayBuffer = await imageResp.arrayBuffer();
+                console.log('OCR - ArrayBuffer size:', arrayBuffer.byteLength);
                 const buffer = Buffer.from(arrayBuffer);
                 base64Data = buffer.toString("base64");
+                console.log('OCR - Base64 data length:', base64Data.length);
                 mimeType = imageResp.headers.get("content-type") || "image/jpeg";
+                console.log('OCR - Detected MIME type:', mimeType);
             }
 
             // Clean up data URL prefix if sent
@@ -113,9 +124,20 @@ export async function POST(request: NextRequest) {
 
         // First attempt with main prompt
         console.log('OCR - First attempt with main prompt');
-        const result1 = await model.generateContent(contentParts);
-        const response1 = await result1.response;
-        const text1 = response1.text();
+        console.log('OCR - Content parts type:', typeof contentParts);
+        console.log('OCR - Content parts length:', Array.isArray(contentParts) ? contentParts.length : 'Not array');
+        
+        let result1, response1, text1;
+        try {
+            result1 = await model.generateContent(contentParts);
+            response1 = await result1.response;
+            text1 = response1.text();
+            console.log('OCR - Gemini response received, length:', text1.length);
+        } catch (geminiError) {
+            console.error('OCR - Gemini API error:', geminiError);
+            console.error('OCR - Gemini error details:', JSON.stringify(geminiError, null, 2));
+            return NextResponse.json({ error: "AI service unavailable. Please try again." }, { status: 500 });
+        }
 
         // Clean up JSON response if present
         const cleanText1 = text1.replace(/```json/g, "").replace(/```/g, "").trim();
@@ -142,7 +164,8 @@ export async function POST(request: NextRequest) {
                         },
                     ];
 
-                const result2 = await model.generateContent(retryContentParts);
+                const retryModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+                const result2 = await retryModel.generateContent(retryContentParts);
                 const response2 = await result2.response;
                 const text2 = response2.text();
                 
