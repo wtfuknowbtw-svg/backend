@@ -45,7 +45,6 @@ Output format (JSON array only, no explanation):
 export async function POST(request: NextRequest) {
     console.log('GEMINI KEY EXISTS:', !!process.env.GEMINI_API_KEY)
     console.log('GEMINI KEY VALUE:', process.env.GEMINI_API_KEY?.substring(0, 10))
-    console.log('MOCK_OCR MODE:', process.env.MOCK_OCR)
     
     // Debug: Print authorization header
     const authHeader = request.headers.get('authorization');
@@ -59,24 +58,6 @@ export async function POST(request: NextRequest) {
     if (!user) {
         console.error('OCR JWT Failed - Full Error:', error);
         return unauthorizedResponse(error || "Unauthorized");
-    }
-
-    // Check if MOCK_OCR is enabled
-    if (process.env.MOCK_OCR === 'true') {
-        console.log('🎭 Using MOCK OCR mode - returning fake response');
-        const mockResponse = {
-            customerName: "Ramesh Sharma",
-            itemName: "Rice 5kg + Dal 2kg",
-            price: 850,
-            type: "credit",
-            date: new Date().toISOString(),
-            aiConfidence: 95,
-            sourceType: "ocr" as const,
-            rawText: "Mock OCR response for testing",
-            isConfirmed: false,
-        };
-        console.log('🎭 Mock Response:', mockResponse);
-        return NextResponse.json({ data: [mockResponse] });
     }
 
     try {
