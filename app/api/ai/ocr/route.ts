@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
         }
 
         const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
         let contentParts: any;
 
@@ -164,7 +164,7 @@ export async function POST(request: NextRequest) {
                         },
                     ];
 
-                const retryModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+                const retryModel = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
                 const result2 = await retryModel.generateContent(retryContentParts);
                 const response2 = await result2.response;
                 const text2 = response2.text();
@@ -196,7 +196,7 @@ export async function POST(request: NextRequest) {
             parsedData = FALLBACK_RESPONSE;
         }
 
-        return NextResponse.json({ data: parsedData });
+        return NextResponse.json({ data: [parsedData] });
 
     } catch (error) {
         if (error instanceof z.ZodError) {
