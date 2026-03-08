@@ -12,35 +12,21 @@ const ocrSchema = z.object({
     message: "Either imageUrl, base64Image, or transcript must be provided",
 });
 
-// Prompt for OCR AI
-const OCR_PROMPT = `
-You are a transaction parser for Indian small business accounting.
-Extract ALL transactions from the provided input (image text or voice transcript).
-For each transaction, output structured JSON.
+// Main OCR prompt for Indian shop records
+const MAIN_OCR_PROMPT = `You are an expert at reading Indian shop records, khata books, receipts, handwritten notes, and bills. Analyze this image carefully even if blurry, tilted, rotated, or low quality. The text may be in Hindi, Marathi, English, or mixed languages. Common Indian shop items: chawal, daal, doodh, sabzi, tel, atta, cheeni, namak. Common names: Ram, Raju, Suresh, Ramesh, Vijay, Mohan, Sita, Geeta. Extract transaction data and return ONLY valid JSON, no extra text: { customerName: string, itemName: string, price: number, type: credit or cash, date: string, confidence: number 0-100, rawText: string }. If price has rupee symbol extract only the number. Always return JSON even if confidence is low. Never return empty.`;
 
-Rules:
-- "udhar" / "udhaar" / "credit" = type: "credit"
-- "cash" / "nakad" / "paid" = type: "cash"
-- Common Indian units: kg, litre/ltr, piece/pcs, dozen
-- If customer name is unclear, use "Unknown Customer"
-- Always output a confidence score 0-100 per transaction
-- If a field cannot be determined, set it to null (never guess)
+// Simplified retry prompt
+const RETRY_OCR_PROMPT = `Read this image and find: person name, item name, and amount/price. Return JSON only: { customerName, itemName, price, type, confidence, rawText }`;
 
-Output format (JSON array only, no explanation):
-[
-  {
-    "customer_name": "string | null",
-    "item_name": "string | null",
-    "quantity": number | null,
-    "unit": "string | null",
-    "price": number | null,
-    "transaction_type": "credit" | "cash" | "expense" | "unknown",
-    "date": "ISO string | null",
-    "confidence": number,
-    "raw_text": "original text this was parsed from"
-  }
-]
-`;
+// Fallback response for very low confidence
+const FALLBACK_RESPONSE = {
+    customerName: '',
+    itemName: '',
+    price: 0,
+    type: 'credit',
+    confidence: 0,
+    rawText: 'Could not read image'
+};
 
 export async function POST(request: NextRequest) {
     console.log('GEMINI KEY EXISTS:', !!process.env.GEMINI_API_KEY)
@@ -115,7 +101,7 @@ export async function POST(request: NextRequest) {
 
             // For Gemini vision model, we need to send the image as inlineData
             contentParts = [
-                OCR_PROMPT,
+                MAIN_OCR_PROMPT,
                 {
                     inlineData: {
                         data: base64Data,
@@ -125,18 +111,66 @@ export async function POST(request: NextRequest) {
             ];
         }
 
-        const result = await model.generateContent(contentParts);
-        const response = await result.response;
-        const text = response.text();
+        // First attempt with main prompt
+        console.log('OCR - First attempt with main prompt');
+        const result1 = await model.generateContent(contentParts);
+        const response1 = await result1.response;
+        const text1 = response1.text();
 
         // Clean up JSON response if present
-        const cleanText = text.replace(/```json/g, "").replace(/```/g, "").trim();
+        const cleanText1 = text1.replace(/```json/g, "").replace(/```/g, "").trim();
 
         let parsedData;
         try {
-            parsedData = JSON.parse(cleanText);
+            parsedData = JSON.parse(cleanText1);
+            console.log('OCR - First attempt successful, confidence:', parsedData.confidence);
+            
+            // Check if we need retry (confidence < 40 OR price is 0)
+            if (parsedData.confidence < 40 || parsedData.price === 0) {
+                console.log('OCR - Low confidence or zero price, attempting retry');
+                
+                // Second attempt with simplified prompt
+                const retryContentParts = transcript 
+                    ? `Here is the voice transcript: "${transcript}"`
+                    : [
+                        RETRY_OCR_PROMPT,
+                        {
+                            inlineData: {
+                                data: contentParts[1].inlineData.data,
+                                mimeType: contentParts[1].inlineData.mimeType,
+                            },
+                        },
+                    ];
+
+                const result2 = await model.generateContent(retryContentParts);
+                const response2 = await result2.response;
+                const text2 = response2.text();
+                
+                const cleanText2 = text2.replace(/```json/g, "").replace(/```/g, "").trim();
+                
+                try {
+                    const parsedData2 = JSON.parse(cleanText2);
+                    console.log('OCR - Retry successful, confidence:', parsedData2.confidence);
+                    
+                    // Use retry result if it has better confidence or valid price
+                    if (parsedData2.confidence > parsedData.confidence || 
+                        (parsedData.price === 0 && parsedData2.price > 0)) {
+                        parsedData = parsedData2;
+                    }
+                } catch (e) {
+                    console.log('OCR - Retry failed to parse, using first attempt');
+                }
+            }
+            
+            // Final check - if confidence is still below 20, return fallback
+            if (parsedData.confidence < 20) {
+                console.log('OCR - Very low confidence, returning fallback');
+                parsedData = FALLBACK_RESPONSE;
+            }
+            
         } catch (e) {
-            return NextResponse.json({ error: "Failed to parse AI output", rawContent: cleanText }, { status: 500 });
+            console.log('OCR - First attempt failed to parse, returning fallback');
+            parsedData = FALLBACK_RESPONSE;
         }
 
         return NextResponse.json({ data: parsedData });
