@@ -70,10 +70,13 @@ export async function POST(request: NextRequest) {
             price: 850,
             type: "credit",
             date: new Date().toISOString(),
-            confidence: 95,
-            raw_text: "Mock OCR response for testing"
+            aiConfidence: 95,
+            sourceType: "ocr" as const,
+            rawText: "Mock OCR response for testing",
+            isConfirmed: false,
         };
-        return NextResponse.json({ data: mockResponse });
+        console.log('🎭 Mock Response:', mockResponse);
+        return NextResponse.json({ data: [mockResponse] });
     }
 
     try {
