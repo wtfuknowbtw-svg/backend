@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { NextRequest } from "next/server";
 import { z } from "zod";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import OpenAI from "openai";
 import { verifyJWT, unauthorizedResponse } from "@/middleware/auth";
 
 const ocrSchema = z.object({
@@ -50,18 +50,18 @@ export async function POST(request: NextRequest) {
         const body = await request.json();
         const { imageUrl, base64Image, transcript } = ocrSchema.parse(body);
 
-        const apiKey = process.env.GEMINI_API_KEY;
-        console.log('OCR Request - Gemini API Key exists:', !!apiKey);
+        const apiKey = process.env.OPENAI_API_KEY;
+        console.log('OCR Request - OpenAI API Key exists:', !!apiKey);
         
         if (!apiKey) {
-            console.error('OCR Error - Gemini API key not configured in environment');
+            console.error('OCR Error - OpenAI API key not configured in environment');
             return NextResponse.json({ 
-                error: "Gemini API key not configured on server. Please contact administrator." 
+                error: "OpenAI API key not configured on server. Please contact administrator." 
             }, { status: 500 });
         }
 
-        const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+        const openai = new OpenAI({ apiKey });
+        const model = "gpt-4o-mini";
 
         let contentParts: any;
 
@@ -110,15 +110,18 @@ export async function POST(request: NextRequest) {
                 return NextResponse.json({ error: "No image or transcript data provided" }, { status: 400 });
             }
 
-            // For Gemini vision model, we need to send the image as inlineData
+            // For OpenAI vision model, we need to send the image as base64
             contentParts = [
-                MAIN_OCR_PROMPT,
                 {
-                    inlineData: {
-                        data: base64Data,
-                        mimeType: mimeType,
-                    },
+                    type: "text",
+                    text: MAIN_OCR_PROMPT
                 },
+                {
+                    type: "image_url",
+                    image_url: {
+                        url: `data:${mimeType};base64,${base64Data}`
+                    }
+                }
             ];
         }
 
@@ -129,13 +132,22 @@ export async function POST(request: NextRequest) {
         
         let result1, response1, text1;
         try {
-            result1 = await model.generateContent(contentParts);
-            response1 = await result1.response;
-            text1 = response1.text();
-            console.log('OCR - Gemini response received, length:', text1.length);
-        } catch (geminiError) {
-            console.error('OCR - Gemini API error:', geminiError);
-            console.error('OCR - Gemini error details:', JSON.stringify(geminiError, null, 2));
+            const messages = transcript 
+                ? [{ role: "user", content: `Here is the voice transcript: "${transcript}"` }]
+                : contentParts;
+
+            response1 = await openai.chat.completions.create({
+                model: model,
+                messages: messages,
+                max_tokens: 1000,
+                temperature: 0.1,
+            });
+            
+            text1 = response1.choices[0]?.message?.content || '';
+            console.log('OCR - OpenAI response received, length:', text1.length);
+        } catch (openaiError) {
+            console.error('OCR - OpenAI API error:', openaiError);
+            console.error('OCR - OpenAI error details:', JSON.stringify(openaiError, null, 2));
             return NextResponse.json({ error: "AI service unavailable. Please try again." }, { status: 500 });
         }
 
@@ -153,21 +165,28 @@ export async function POST(request: NextRequest) {
                 
                 // Second attempt with simplified prompt
                 const retryContentParts = transcript 
-                    ? `Here is the voice transcript: "${transcript}"`
+                    ? [{ role: "user", content: `Here is the voice transcript: "${transcript}"` }]
                     : [
-                        RETRY_OCR_PROMPT,
                         {
-                            inlineData: {
-                                data: contentParts[1].inlineData.data,
-                                mimeType: contentParts[1].inlineData.mimeType,
-                            },
+                            type: "text",
+                            text: RETRY_OCR_PROMPT
                         },
+                        {
+                            type: "image_url",
+                            image_url: {
+                                url: contentParts[1].image_url.url
+                            }
+                        }
                     ];
 
-                const retryModel = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-                const result2 = await retryModel.generateContent(retryContentParts);
-                const response2 = await result2.response;
-                const text2 = response2.text();
+                const response2 = await openai.chat.completions.create({
+                    model: model,
+                    messages: retryContentParts,
+                    max_tokens: 1000,
+                    temperature: 0.1,
+                });
+                
+                const text2 = response2.choices[0]?.message?.content || '';
                 
                 const cleanText2 = text2.replace(/```json/g, "").replace(/```/g, "").trim();
                 
