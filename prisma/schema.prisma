@@ -11,6 +11,7 @@ model Business {
   id          String   @id @default(cuid())
   phone       String   @unique
   name        String?
+  ownerName   String?
   type        String?  // "kirana", "clinic", "workshop", etc.
   language    String   @default("hi") // "hi", "en", "mr", etc.
   gstin       String?

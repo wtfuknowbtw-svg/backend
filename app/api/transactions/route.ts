@@ -11,7 +11,7 @@ const transactionSchema = z.object({
     quantity: z.number().optional(),
     unit: z.string().optional(),
     price: z.number().positive(),
-    type: z.enum(["credit", "cash", "expense"]),
+    type: z.enum(["credit", "cash", "expense", "udhar_payment"]),
     sourceType: z.string().optional(),
     aiConfidence: z.number().min(0).max(100).optional(),
     rawText: z.string().optional(),
@@ -83,9 +83,9 @@ export async function POST(request: NextRequest) {
             },
         });
 
-        // Update totalUdhar if credit or payment (very basic sync)
-        if (resolvedCustomerId && (parsed.type === "credit" || parsed.type === "cash")) {
-            // Let's keep totalUdhar updated
+        // Update totalUdhar if credit, cash, or udhar_payment
+        if (resolvedCustomerId && (parsed.type === "credit" || parsed.type === "cash" || parsed.type === "udhar_payment")) {
+            // Credit adds to udhar, cash/udhar_payment subtracts
             const amountChange = parsed.type === "credit" ? parsed.price : -parsed.price;
             await prisma.customer.update({
                 where: { id: resolvedCustomerId },
