@@ -58,11 +58,16 @@ model Transaction {
 }
 
 model Subscription {
-  id         String   @id @default(cuid())
-  businessId String   @unique
-  plan       String   @default("free") // "free", "basic", "pro"
-  endsAt     DateTime?
-  createdAt  DateTime @default(now())
+  id                      String   @id @default(cuid())
+  businessId              String   @unique
+  plan                    String   @default("free") // "free", "basic", "pro"
+  status                  String   @default("active") // "active", "cancelled", "expired"
+  razorpaySubscriptionId  String?
+  razorpayCustomerId      String?
+  interval                String   @default("month") // "month", "year"
+  endsAt                  DateTime?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @default(now()) @updatedAt
   
   business Business @relation(fields: [businessId], references: [id])
 }

@@ -35,10 +35,22 @@ export async function POST(request: Request) {
                     }, { status: 401 });
                 }
             } else {
-                // No SMS service configured
-                return NextResponse.json({ 
-                    error: "OTP service not configured" 
-                }, { status: 500 });
+                // Verify via local database (Fallback/Textbee)
+                const otpRecord = await prisma.otp.findUnique({
+                    where: { phone },
+                });
+
+                if (otpRecord && otpRecord.code === otp && otpRecord.expiresAt > new Date()) {
+                    otpValid = true;
+                    console.log('OTP verified via local database');
+                    
+                    // Delete OTP after successful verification
+                    await prisma.otp.delete({ where: { phone } });
+                } else {
+                    return NextResponse.json({ 
+                        error: "Invalid or expired OTP" 
+                    }, { status: 401 });
+                }
             }
         } else {
             otpValid = true; // Master OTP always valid

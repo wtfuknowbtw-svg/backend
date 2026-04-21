@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
 
     try {
         if (id) {
-            const customer = await prisma.customer.findUnique({
+            const customer = await prisma.customer.findFirst({
                 where: { id, businessId },
                 include: {
                     transactions: {

@@ -83,9 +83,9 @@ export async function POST(request: NextRequest) {
             },
         });
 
-        // Update totalUdhar if credit, cash, or udhar_payment
-        if (resolvedCustomerId && (parsed.type === "credit" || parsed.type === "cash" || parsed.type === "udhar_payment")) {
-            // Credit adds to udhar, cash/udhar_payment subtracts
+        // Update totalUdhar if credit or udhar_payment
+        if (resolvedCustomerId && (parsed.type === "credit" || parsed.type === "udhar_payment")) {
+            // Credit adds to udhar, udhar_payment subtracts
             const amountChange = parsed.type === "credit" ? parsed.price : -parsed.price;
             await prisma.customer.update({
                 where: { id: resolvedCustomerId },
