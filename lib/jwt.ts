@@ -6,6 +6,7 @@ const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 export interface JWTPayload {
     businessId: string;
     phone: string;
+    plan: 'free' | 'pro' | 'business';
     iat?: number;
     exp?: number;
 }
@@ -13,10 +14,11 @@ export interface JWTPayload {
 /**
  * Generate a JWT token for a business user
  */
-export function generateToken(businessId: string, phone: string): string {
+export function generateToken(businessId: string, phone: string, plan: 'free' | 'pro' | 'business'): string {
     const payload: Omit<JWTPayload, 'iat' | 'exp'> = {
         businessId,
         phone,
+        plan,
     };
 
     return jwt.sign(payload, JWT_SECRET, {

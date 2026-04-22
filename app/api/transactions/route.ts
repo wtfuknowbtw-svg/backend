@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { NextRequest } from "next/server";
-import { verifyJWT, unauthorizedResponse } from "@/middleware/auth";
+import { verifyJWT, unauthorizedResponse, checkTransactionLimit, paymentRequiredResponse } from "@/middleware/auth";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 
@@ -43,6 +43,12 @@ export async function POST(request: NextRequest) {
     const { user, error } = await verifyJWT(request);
     if (!user) {
         return unauthorizedResponse(error || "Unauthorized");
+    }
+
+    // Check transaction limit for free plan
+    const limitCheck = await checkTransactionLimit(user.businessId, user.plan);
+    if (!limitCheck.canCreate) {
+        return paymentRequiredResponse(limitCheck.error || "Transaction limit exceeded");
     }
 
     try {

@@ -11,6 +11,7 @@ interface Business {
   phone: string;
   name: string | null;
   language: string;
+  plan: 'free' | 'pro' | 'business';
   created_at: Date;
 }
 
@@ -52,12 +53,51 @@ class NeonDatabase {
     return result.rows[0] || null;
   }
 
-  async createBusiness(data: { phone: string; name?: string | null; language?: string }): Promise<Business> {
+  async createBusiness(data: { phone: string; name?: string | null; language?: string; plan?: 'free' | 'pro' | 'business' }): Promise<Business> {
     const result = await pool.query(
-      'INSERT INTO "Business" (phone, name, language) VALUES ($1, $2, $3) RETURNING *',
-      [data.phone, data.name || null, data.language || 'hi']
+      'INSERT INTO "Business" (phone, name, language, plan) VALUES ($1, $2, $3, $4) RETURNING *',
+      [data.phone, data.name || null, data.language || 'hi', data.plan || 'free']
     );
     return result.rows[0];
+  }
+
+  async updateBusinessPlan(businessId: string, plan: 'free' | 'pro' | 'business'): Promise<Business | null> {
+    const result = await pool.query(
+      'UPDATE "Business" SET plan = $1 WHERE id = $2 RETURNING *',
+      [plan, businessId]
+    );
+    return result.rows[0] || null;
+  }
+
+  async getBusinessUsageStats(businessId: string): Promise<{
+    transactionCount: number;
+    customerCount: number;
+    plan: 'free' | 'pro' | 'business';
+  }> {
+    const businessResult = await pool.query(
+      'SELECT plan FROM "Business" WHERE id = $1',
+      [businessId]
+    );
+    
+    if (!businessResult.rows[0]) {
+      throw new Error('Business not found');
+    }
+
+    const transactionResult = await pool.query(
+      'SELECT COUNT(*) as count FROM "Transaction" WHERE business_id = $1',
+      [businessId]
+    );
+
+    const customerResult = await pool.query(
+      'SELECT COUNT(*) as count FROM "Customer" WHERE business_id = $1',
+      [businessId]
+    );
+
+    return {
+      plan: businessResult.rows[0].plan,
+      transactionCount: parseInt(transactionResult.rows[0].count),
+      customerCount: parseInt(customerResult.rows[0].count),
+    };
   }
 
   // Transaction operations
