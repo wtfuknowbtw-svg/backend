@@ -39,6 +39,16 @@ export async function GET(request: NextRequest) {
     }
 
     try {
+        // Test database connection first
+        const dbConnected = await neonDb.testConnection();
+        console.log('Database connection test:', dbConnected);
+        
+        if (!dbConnected) {
+            return NextResponse.json({ 
+                error: "Database connection failed" 
+            }, { status: 500 });
+        }
+
         // Get usage statistics from database
         const stats = await neonDb.getBusinessUsageStats(user.businessId);
 
