@@ -82,30 +82,46 @@ class NeonDatabase {
     customerCount: number;
     plan: 'free' | 'pro' | 'business';
   }> {
-    const businessResult = await pool.query(
-      'SELECT plan FROM "Business" WHERE id = $1',
-      [businessId]
-    );
+    try {
+      console.log('Getting usage stats for business:', businessId);
+      
+      const businessResult = await pool.query(
+        'SELECT plan FROM "Business" WHERE id = $1',
+        [businessId]
+      );
 
-    if (!businessResult.rows[0]) {
-      throw new Error('Business not found');
+      if (!businessResult.rows[0]) {
+        throw new Error('Business not found');
+      }
+
+      console.log('Business plan:', businessResult.rows[0].plan);
+
+      const transactionResult = await pool.query(
+        'SELECT COUNT(*) as count FROM "Transaction" WHERE "businessId" = $1',
+        [businessId]
+      );
+
+      console.log('Transaction count result:', transactionResult.rows[0]);
+
+      const customerResult = await pool.query(
+        'SELECT COUNT(*) as count FROM "Customer" WHERE "businessId" = $1',
+        [businessId]
+      );
+
+      console.log('Customer count result:', customerResult.rows[0]);
+
+      const stats = {
+        plan: businessResult.rows[0].plan,
+        transactionCount: parseInt(transactionResult.rows[0]?.count || '0'),
+        customerCount: parseInt(customerResult.rows[0]?.count || '0'),
+      };
+
+      console.log('Final usage stats:', stats);
+      return stats;
+    } catch (error: any) {
+      console.error('Error in getBusinessUsageStats:', error);
+      throw new Error(`Database error: ${error.message || error}`);
     }
-
-    const transactionResult = await pool.query(
-      'SELECT COUNT(*) as count FROM "Transaction" WHERE "businessId" = $1',
-      [businessId]
-    );
-
-    const customerResult = await pool.query(
-      'SELECT COUNT(*) as count FROM "Customer" WHERE "businessId" = $1',
-      [businessId]
-    );
-
-    return {
-      plan: businessResult.rows[0].plan,
-      transactionCount: parseInt(transactionResult.rows[0].count),
-      customerCount: parseInt(customerResult.rows[0].count),
-    };
   }
 
   // Transaction operations
