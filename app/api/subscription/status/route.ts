@@ -41,16 +41,26 @@ export async function GET(request: NextRequest) {
     try {
         console.log('Subscription status request for business:', user.businessId);
         
-        // For now, return hardcoded data to avoid database issues
-        // TODO: Replace with real database queries once database is stable
-        const stats = {
-            plan: 'free',
-            transactionCount: 25,
-            customerCount: 5
-        };
+        // Fetch real usage stats + authoritative plan from DB.
+        // This also handles old JWTs that were issued without a plan field.
+        const stats = await neonDb.getBusinessUsageStats(user.businessId);
+
+        // The plan in the JWT may be undefined for old tokens; always trust the DB.
+        const VALID_PLANS = ['free', 'pro', 'business'] as const;
+        type Plan = typeof VALID_PLANS[number];
+        const resolvedPlan: Plan = VALID_PLANS.includes(stats.plan as Plan)
+            ? (stats.plan as Plan)
+            : 'free';
 
         // Define plan limits and features
-        const planConfig = {
+        const planConfig: Record<Plan, {
+            transactionLimit: number;
+            customerLimit: number;
+            aiFeatures: boolean;
+            multipleStaff: boolean;
+            unlimitedTransactions: boolean;
+            unlimitedCustomers: boolean;
+        }> = {
             'free': {
                 transactionLimit: 50,
                 customerLimit: 10,
@@ -77,7 +87,7 @@ export async function GET(request: NextRequest) {
             }
         };
 
-        const config = planConfig[user.plan];
+        const config = planConfig[resolvedPlan];
 
         // Calculate remaining counts
         const transactionRemaining = config.unlimitedTransactions ? 
@@ -88,7 +98,7 @@ export async function GET(request: NextRequest) {
 
         const response = {
             data: {
-                plan: user.plan,
+                plan: resolvedPlan,
                 usage: {
                     transactions: {
                         current: stats.transactionCount,

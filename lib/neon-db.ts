@@ -85,8 +85,13 @@ class NeonDatabase {
     try {
       console.log('Getting usage stats for business:', businessId);
       
+      // Plan lives on the Subscription table, not Business.
+      // LEFT JOIN so businesses without a subscription row default to 'free'.
       const businessResult = await pool.query(
-        'SELECT plan FROM "Business" WHERE id = $1',
+        `SELECT b.id, COALESCE(s.plan, 'free') as plan
+         FROM "Business" b
+         LEFT JOIN "Subscription" s ON s."businessId" = b.id
+         WHERE b.id = $1`,
         [businessId]
       );
 

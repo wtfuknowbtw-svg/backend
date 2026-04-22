@@ -59,6 +59,7 @@ export async function POST(request: Request) {
         // Find or create business in database
         let business = await prisma.business.findUnique({
             where: { phone },
+            include: { subscription: true },
         });
 
         if (!business) {
@@ -69,6 +70,7 @@ export async function POST(request: Request) {
                     name: null, // Can be updated later
                     language: "hi", // Default to Hindi
                 },
+                include: { subscription: true },
             });
             console.log(`Created new business for phone: ${phone}, ID: ${business.id}`);
         } else {
@@ -77,8 +79,14 @@ export async function POST(request: Request) {
         
         console.log("Login successful for business ID:", business.id);
         
-        // Generate JWT token
-        const token = generateToken(business.id, business.phone);
+        // Resolve plan from Subscription table (defaults to 'free')
+        const rawPlan = business.subscription?.plan ?? 'free';
+        const plan = (['free', 'pro', 'business'].includes(rawPlan)
+            ? rawPlan
+            : 'free') as 'free' | 'pro' | 'business';
+
+        // Generate JWT token — includes plan so downstream routes can use it
+        const token = generateToken(business.id, business.phone, plan);
         
         // Return JSON response with user info and JWT token
         return NextResponse.json({

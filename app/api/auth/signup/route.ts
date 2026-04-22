@@ -37,8 +37,8 @@ export async function POST(request: Request) {
             },
         });
 
-        // Generate JWT token
-        const token = generateToken(business.id, business.phone);
+        // Generate JWT token — new signups always start on free plan
+        const token = generateToken(business.id, business.phone, 'free');
 
         return NextResponse.json({
             success: true,
