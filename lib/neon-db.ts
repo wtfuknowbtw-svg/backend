@@ -12,38 +12,38 @@ interface Business {
   name: string | null;
   language: string;
   plan: 'free' | 'pro' | 'business';
-  created_at: Date;
+  createdAt: Date;
 }
 
 interface Transaction {
   id: string;
-  business_id: string;
-  customer_id: string | null;
-  item_name: string | null;
+  businessId: string;
+  customerId: string | null;
+  itemName: string | null;
   quantity: number | null;
   unit: string | null;
   price: number;
   type: string;
   date: Date;
-  ai_confidence: number | null;
-  source_type: string | null;
-  source_image_url: string | null;
-  raw_text: string | null;
-  is_confirmed: boolean;
-  created_at: Date;
+  aiConfidence: number | null;
+  sourceType: string | null;
+  sourceImageUrl: string | null;
+  rawText: string | null;
+  isConfirmed: boolean;
+  createdAt: Date;
 }
 
 interface Customer {
   id: string;
-  business_id: string;
+  businessId: string;
   name: string;
   phone: string | null;
-  total_udhar: number;
-  created_at: Date;
+  totalUdhar: number;
+  createdAt: Date;
 }
 
 class NeonDatabase {
-  
+
   // Business operations
   async findBusinessByPhone(phone: string): Promise<Business | null> {
     const result = await pool.query(
@@ -59,6 +59,14 @@ class NeonDatabase {
       [data.phone, data.name || null, data.language || 'hi', data.plan || 'free']
     );
     return result.rows[0];
+  }
+
+  async findBusinessById(id: string): Promise<Business | null> {
+    const result = await pool.query(
+      'SELECT * FROM "Business" WHERE id = $1',
+      [id]
+    );
+    return result.rows[0] || null;
   }
 
   async updateBusinessPlan(businessId: string, plan: 'free' | 'pro' | 'business'): Promise<Business | null> {
@@ -78,18 +86,18 @@ class NeonDatabase {
       'SELECT plan FROM "Business" WHERE id = $1',
       [businessId]
     );
-    
+
     if (!businessResult.rows[0]) {
       throw new Error('Business not found');
     }
 
     const transactionResult = await pool.query(
-      'SELECT COUNT(*) as count FROM "Transaction" WHERE business_id = $1',
+      'SELECT COUNT(*) as count FROM "Transaction" WHERE "businessId" = $1',
       [businessId]
     );
 
     const customerResult = await pool.query(
-      'SELECT COUNT(*) as count FROM "Customer" WHERE business_id = $1',
+      'SELECT COUNT(*) as count FROM "Customer" WHERE "businessId" = $1',
       [businessId]
     );
 
@@ -101,42 +109,42 @@ class NeonDatabase {
   }
 
   // Transaction operations
-  async createTransaction(data: Omit<Transaction, 'id' | 'created_at'>): Promise<Transaction> {
+  async createTransaction(data: Omit<Transaction, 'id' | 'createdAt'>): Promise<Transaction> {
     const result = await pool.query(`
       INSERT INTO "Transaction" (
-        business_id, customer_id, item_name, quantity, unit, 
-        price, type, date, ai_confidence, source_type, 
-        source_image_url, raw_text, is_confirmed
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) 
+        "businessId", "customerId", "itemName", quantity, unit,
+        price, type, date, "aiConfidence", "sourceType",
+        "sourceImageUrl", "rawText", "isConfirmed"
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING *
     `, [
-      data.business_id, data.customer_id, data.item_name, data.quantity,
-      data.unit, data.price, data.type, data.date, data.ai_confidence,
-      data.source_type, data.source_image_url, data.raw_text, data.is_confirmed
+      data.businessId, data.customerId, data.itemName, data.quantity,
+      data.unit, data.price, data.type, data.date, data.aiConfidence,
+      data.sourceType, data.sourceImageUrl, data.rawText, data.isConfirmed
     ]);
     return result.rows[0];
   }
 
   async getTransactionsByBusiness(businessId: string): Promise<Transaction[]> {
     const result = await pool.query(
-      'SELECT * FROM "Transaction" WHERE business_id = $1 ORDER BY date DESC',
+      'SELECT * FROM "Transaction" WHERE "businessId" = $1 ORDER BY date DESC',
       [businessId]
     );
     return result.rows;
   }
 
   // Customer operations
-  async createCustomer(data: Omit<Customer, 'id' | 'created_at'>): Promise<Customer> {
+  async createCustomer(data: Omit<Customer, 'id' | 'createdAt'>): Promise<Customer> {
     const result = await pool.query(
-      'INSERT INTO "Customer" (business_id, name, phone, total_udhar) VALUES ($1, $2, $3, $4) RETURNING *',
-      [data.business_id, data.name, data.phone, data.total_udhar]
+      'INSERT INTO "Customer" ("businessId", name, phone, "totalUdhar") VALUES ($1, $2, $3, $4) RETURNING *',
+      [data.businessId, data.name, data.phone, data.totalUdhar]
     );
     return result.rows[0];
   }
 
   async getCustomersByBusiness(businessId: string): Promise<Customer[]> {
     const result = await pool.query(
-      'SELECT * FROM "Customer" WHERE business_id = $1 ORDER BY created_at DESC',
+      'SELECT * FROM "Customer" WHERE "businessId" = $1 ORDER BY "createdAt" DESC',
       [businessId]
     );
     return result.rows;
@@ -151,9 +159,14 @@ class NeonDatabase {
   }
 
   async updateCustomer(id: string, data: Partial<Customer>): Promise<Customer | null> {
-    const fields = Object.keys(data).filter(key => key !== 'id').map((key, index) => `${key} = $${index + 2}`).join(', ');
-    const values = Object.values(data).filter((_, index) => Object.keys(data)[index] !== 'id');
-    
+    const fields = Object.keys(data)
+      .filter(key => key !== 'id')
+      .map((key, index) => `"${key}" = $${index + 2}`)
+      .join(', ');
+    const values = Object.entries(data)
+      .filter(([key]) => key !== 'id')
+      .map(([, value]) => value);
+
     const result = await pool.query(
       `UPDATE "Customer" SET ${fields} WHERE id = $1 RETURNING *`,
       [id, ...values]
@@ -174,3 +187,4 @@ class NeonDatabase {
 }
 
 export const neonDb = new NeonDatabase();
+
