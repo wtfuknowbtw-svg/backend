@@ -15,8 +15,9 @@ model Business {
   type        String?  // "kirana", "clinic", "workshop", etc.
   language    String   @default("hi") // "hi", "en", "mr", etc.
   gstin       String?
+  pushToken   String?  // Expo push notification token
   createdAt   DateTime @default(now())
-  
+
   transactions Transaction[]
   customers    Customer[]
   subscription Subscription?
