@@ -9,6 +9,12 @@ const customerSchema = z.object({
     phone: z.string().optional(),
 });
 
+const customerUpdateSchema = z.object({
+    id: z.string().min(1, "Customer ID is required"),
+    name: z.string().min(1, "Name is required").optional(),
+    phone: z.string().optional().nullable(),
+});
+
 // This endpoint handles both listing all customers and getting a specific one
 export async function GET(request: NextRequest) {
     const { user, error } = await verifyJWT(request);
@@ -82,6 +88,44 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: "Validation Error", details: error.flatten().fieldErrors }, { status: 400 });
         }
         console.error("Customers POST Error:", error);
+        return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    }
+}
+
+export async function PUT(request: NextRequest) {
+    const { user, error } = await verifyJWT(request);
+    if (!user) {
+        return unauthorizedResponse(error || "Unauthorized");
+    }
+
+    try {
+        const body = await request.json();
+        const parsed = customerUpdateSchema.parse(body);
+
+        // Verify customer belongs to this business
+        const existing = await prisma.customer.findFirst({
+            where: { id: parsed.id, businessId: user.businessId },
+        });
+
+        if (!existing) {
+            return NextResponse.json({ error: "Customer not found" }, { status: 404 });
+        }
+
+        const updateData: Record<string, any> = {};
+        if (parsed.name !== undefined) updateData.name = parsed.name;
+        if (parsed.phone !== undefined) updateData.phone = parsed.phone || null;
+
+        const customer = await prisma.customer.update({
+            where: { id: parsed.id },
+            data: updateData,
+        });
+
+        return NextResponse.json({ data: customer, message: "Customer updated successfully" });
+    } catch (error) {
+        if (error instanceof z.ZodError) {
+            return NextResponse.json({ error: "Validation Error", details: error.flatten().fieldErrors }, { status: 400 });
+        }
+        console.error("Customers PUT Error:", error);
         return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
     }
 }
