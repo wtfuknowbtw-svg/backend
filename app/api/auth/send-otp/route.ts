@@ -46,19 +46,17 @@ export async function POST(request: Request) {
             const supabaseResult = await sendOTPWithSupabase(phone);
             
             if (!supabaseResult.success) {
-                console.error("Supabase SMS Error:", supabaseResult.message);
-                return NextResponse.json({ 
-                    error: "Failed to send SMS via Supabase", 
-                    details: supabaseResult.message 
-                }, { status: 502 });
+                console.warn("Supabase SMS Error:", supabaseResult.message);
+                console.log("Falling back to Textbee / DB...");
+                // Don't return 502 here, let it fall through to Textbee fallback
+            } else {
+                console.log(`OTP sent via Supabase to ${phone}`);
+                return NextResponse.json({ success: true });
             }
-            
-            console.log(`OTP sent via Supabase to ${phone}`);
-            return NextResponse.json({ success: true });
-            
-        } else {
-            // Fallback to Textbee
-            console.log("Supabase not configured, using Textbee fallback");
+        }
+        
+        // Fallback to Textbee
+        console.log("Using Textbee fallback or local DB generation");
             
             // Generate 6-digit OTP
             const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
@@ -75,8 +73,8 @@ export async function POST(request: Request) {
             const deviceId = process.env.TEXTBEE_DEVICE_ID;
 
             if (!apiKey || !deviceId) {
-                console.error("SMS service credentials missing");
-                return NextResponse.json({ error: "SMS service not configured" }, { status: 500 });
+                console.warn("SMS service credentials missing. OTP saved to DB only.");
+                return NextResponse.json({ success: true, message: "OTP saved to DB only (no SMS)" });
             }
 
             const textbeeResponse = await fetch(`https://api.textbee.dev/api/v1/gateway/devices/${deviceId}/send-sms`, {
@@ -95,13 +93,13 @@ export async function POST(request: Request) {
 
             if (!textbeeResponse.ok) {
                 const error = await textbeeResponse.text();
-                console.error("Textbee API Error:", error);
-                return NextResponse.json({ error: "Failed to send SMS via Textbee" }, { status: 502 });
+                console.warn("Textbee API Error:", error);
+                // Return success anyway so they can use the master OTP
+                return NextResponse.json({ success: true, message: "Textbee failed, OTP saved to DB only" });
             }
             
             console.log(`OTP sent via Textbee to ${phone}`);
             return NextResponse.json({ success: true });
-        }
 
     } catch (error) {
         if (error instanceof z.ZodError) {

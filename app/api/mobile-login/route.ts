@@ -28,11 +28,22 @@ export async function POST(request: Request) {
                     otpValid = true;
                     console.log('OTP verified via Supabase');
                 } else {
-                    console.log('Supabase verification failed:', supabaseResult.message);
-                    return NextResponse.json({ 
-                        error: "Invalid OTP", 
-                        details: supabaseResult.message 
-                    }, { status: 401 });
+                    console.log('Supabase verification failed, trying local DB fallback:', supabaseResult.message);
+                    
+                    const otpRecord = await prisma.otp.findUnique({
+                        where: { phone },
+                    });
+
+                    if (otpRecord && otpRecord.code === otp && otpRecord.expiresAt > new Date()) {
+                        otpValid = true;
+                        console.log('OTP verified via local database (fallback)');
+                        await prisma.otp.delete({ where: { phone } });
+                    } else {
+                        return NextResponse.json({ 
+                            error: "Invalid OTP", 
+                            details: supabaseResult.message 
+                        }, { status: 401 });
+                    }
                 }
             } else {
                 // Verify via local database (Fallback/Textbee)
