@@ -3,6 +3,9 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { verifyJWT, unauthorizedResponse } from "@/middleware/auth";
+import jwt from "jsonwebtoken";
+import fs from "fs";
+import path from "path";
 
 const ocrSchema = z.object({
     imageUrl: z.string().url().optional(),
@@ -101,6 +104,65 @@ async function structureTextWithGemini(rawText: string, geminiKey: string): Prom
     }
 }
 
+async function getGoogleVisionAccessToken(): Promise<string | null> {
+    try {
+        let creds: any = null;
+
+        // 1. Check if stringified credentials are in environment variable
+        if (process.env.GOOGLE_CLOUD_VISION_CREDS) {
+            creds = JSON.parse(process.env.GOOGLE_CLOUD_VISION_CREDS);
+        } else {
+            // 2. Check if local google-vision-api.json exists
+            const localPath = path.join(process.cwd(), "google-vision-api.json");
+            if (fs.existsSync(localPath)) {
+                const fileContent = fs.readFileSync(localPath, "utf-8");
+                creds = JSON.parse(fileContent);
+            }
+        }
+
+        if (!creds || !creds.private_key || !creds.client_email) {
+            return null;
+        }
+
+        console.log("OCR - Exchanging Google Service Account credentials for OAuth2 Access Token...");
+        const iat = Math.floor(Date.now() / 1000);
+        const exp = iat + 3600;
+
+        const payload = {
+            iss: creds.client_email,
+            scope: "https://www.googleapis.com/auth/cloud-platform",
+            aud: creds.token_uri || "https://oauth2.googleapis.com/token",
+            exp,
+            iat,
+        };
+
+        const token = jwt.sign(payload, creds.private_key, { algorithm: "RS256" });
+
+        const response = await fetch(creds.token_uri || "https://oauth2.googleapis.com/token", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: new URLSearchParams({
+                grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                assertion: token,
+            }),
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error("Failed to exchange JWT for OAuth2 token:", errorText);
+            return null;
+        }
+
+        const data = await response.json();
+        return data.access_token;
+    } catch (err) {
+        console.error("Error during Google Cloud Vision OAuth2 exchange:", err);
+        return null;
+    }
+}
+
 export async function POST(request: NextRequest) {
     // Verify JWT token
     const { user, error } = await verifyJWT(request);
@@ -163,20 +225,37 @@ export async function POST(request: NextRequest) {
             }
 
             const visionApiKey = process.env.GOOGLE_CLOUD_VISION_KEY;
-            if (!visionApiKey) {
-                console.error('OCR Error - Google Cloud Vision API key not configured');
-                return NextResponse.json({ 
-                    error: "Google Cloud Vision API key not configured on server. Please contact administrator." 
-                }, { status: 500 });
+            let visionUrl = `https://vision.googleapis.com/v1/images:annotate`;
+            const headers: Record<string, string> = {
+                "Content-Type": "application/json",
+            };
+
+            if (visionApiKey && visionApiKey !== "AIzaSyA77ittfjA0yF7HjZMoPHx-CDA7oLpqVws") {
+                // If a custom API key is supplied, use it
+                console.log("OCR - Using custom GOOGLE_CLOUD_VISION_KEY API key");
+                visionUrl += `?key=${visionApiKey}`;
+            } else {
+                // Otherwise, try to use the Service Account to generate an Access Token
+                const accessToken = await getGoogleVisionAccessToken();
+                if (accessToken) {
+                    console.log("OCR - Authenticating using Google Service Account OAuth2 Access Token");
+                    headers["Authorization"] = `Bearer ${accessToken}`;
+                } else if (visionApiKey) {
+                    // Fallback to the env API key if service account credentials are not configured
+                    console.log("OCR - Service account not found, falling back to GOOGLE_CLOUD_VISION_KEY");
+                    visionUrl += `?key=${visionApiKey}`;
+                } else {
+                    console.error("OCR Error - No credentials found (neither API key nor service account)");
+                    return NextResponse.json({ 
+                        error: "Google Cloud Vision credentials not configured on server. Please contact administrator." 
+                    }, { status: 500 });
+                }
             }
 
             console.log('OCR - Calling Google Cloud Vision API...');
-            const visionUrl = `https://vision.googleapis.com/v1/images:annotate?key=${visionApiKey}`;
             const visionResponse = await fetch(visionUrl, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
+                headers: headers,
                 body: JSON.stringify({
                     requests: [
                         {
