@@ -3,9 +3,6 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { verifyJWT, unauthorizedResponse } from "@/middleware/auth";
-import jwt from "jsonwebtoken";
-import fs from "fs";
-import path from "path";
 
 const ocrSchema = z.object({
     imageUrl: z.string().url().optional(),
@@ -15,8 +12,30 @@ const ocrSchema = z.object({
     message: "Either imageUrl, base64Image, or transcript must be provided",
 });
 
+// Combined prompt for image OCR + structuring (Gemini handles both in one call)
+const IMAGE_OCR_PROMPT = `You are an expert Indian shop assistant, khata book keeper, and transaction parser.
+Look at this image carefully. It could be a receipt, hand-written bill, shop record, or khata entry.
+The text may be in English, Hindi, Marathi, or a mix of languages.
+
+Common items: chawal, daal, doodh, sabzi, tel, atta, cheeni, namak, soap, biscuit, etc.
+Common names: Ram, Raju, Suresh, Ramesh, Vijay, Mohan, Sita, Geeta, Aman, Rahul, etc.
+
+Read ALL text from the image, then extract the transaction details.
+Return ONLY a valid JSON object matching the format below.
+Do not wrap your response in markdown code blocks like \`\`\`json. Return ONLY the JSON object.
+
+Format:
+{
+  "customerName": "Name of customer (string, e.g., 'Ramesh'). Default to 'Unknown Customer' if not mentioned.",
+  "itemName": "Specific item name(s) (string, e.g., 'Tel, Atta'). If multiple, list them comma-separated. Default to 'Items' if not specified.",
+  "price": number, (The total price or transaction amount as a number, e.g., 250. Extract only numeric value, no rupee/Rs symbol),
+  "type": "credit" or "cash", (Use "credit" if it is credit/udhar/dues/lent/borrowed/owed, or "cash" if paid/received/settled. Default to "credit"),
+  "quantity": number, (Quantity of items as a number. Default to 1 if not specified),
+  "confidence": number (A score between 0 and 100 representing how confident you are in this extraction based on the clarity and completeness of the image)
+}`;
+
 // Prompt for structuring text/transcripts into transaction format
-const STRUCTURING_PROMPT = `You are an expert Indian shop assistant, khata book keeper, and transaction parser.
+const TEXT_STRUCTURING_PROMPT = `You are an expert Indian shop assistant, khata book keeper, and transaction parser.
 Analyze the following text extracted from a receipt, hand-written bill, or shop record (which may contain mixed English, Hindi, or Marathi text with common items like chawal, daal, doodh, sabzi, tel, atta, cheeni, namak, etc., and common names like Ram, Raju, Suresh, Ramesh, Vijay, Mohan, Sita, Geeta, etc.).
 
 Raw Text / Voice Transcript:
@@ -76,16 +95,7 @@ function fallbackStructureFromText(rawText: string): any {
     };
 }
 
-async function structureTextWithGemini(rawText: string, geminiKey: string): Promise<any> {
-    const genAI = new GoogleGenerativeAI(geminiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-
-    const prompt = STRUCTURING_PROMPT.replace('[RAW_TEXT]', rawText);
-    console.log('OCR - Sending raw text to Gemini for structuring...');
-    const result = await model.generateContent(prompt);
-    const responseText = result.response.text();
-    console.log('OCR - Gemini raw response:', responseText);
-
+function parseGeminiResponse(responseText: string, rawText: string): any {
     const cleanJson = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
     try {
         const rawParsed = JSON.parse(cleanJson);
@@ -100,66 +110,8 @@ async function structureTextWithGemini(rawText: string, geminiKey: string): Prom
         };
     } catch (e) {
         console.error('OCR - Failed to parse Gemini response as JSON:', e);
+        console.error('OCR - Raw Gemini response was:', responseText);
         return fallbackStructureFromText(rawText);
-    }
-}
-
-async function getGoogleVisionAccessToken(): Promise<string | null> {
-    try {
-        let creds: any = null;
-
-        // 1. Check if stringified credentials are in environment variable
-        if (process.env.GOOGLE_CLOUD_VISION_CREDS) {
-            creds = JSON.parse(process.env.GOOGLE_CLOUD_VISION_CREDS);
-        } else {
-            // 2. Check if local google-vision-api.json exists
-            const localPath = path.join(process.cwd(), "google-vision-api.json");
-            if (fs.existsSync(localPath)) {
-                const fileContent = fs.readFileSync(localPath, "utf-8");
-                creds = JSON.parse(fileContent);
-            }
-        }
-
-        if (!creds || !creds.private_key || !creds.client_email) {
-            return null;
-        }
-
-        console.log("OCR - Exchanging Google Service Account credentials for OAuth2 Access Token...");
-        const iat = Math.floor(Date.now() / 1000);
-        const exp = iat + 3600;
-
-        const payload = {
-            iss: creds.client_email,
-            scope: "https://www.googleapis.com/auth/cloud-platform",
-            aud: creds.token_uri || "https://oauth2.googleapis.com/token",
-            exp,
-            iat,
-        };
-
-        const token = jwt.sign(payload, creds.private_key, { algorithm: "RS256" });
-
-        const response = await fetch(creds.token_uri || "https://oauth2.googleapis.com/token", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-            body: new URLSearchParams({
-                grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-                assertion: token,
-            }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error("Failed to exchange JWT for OAuth2 token:", errorText);
-            return null;
-        }
-
-        const data = await response.json();
-        return data.access_token;
-    } catch (err) {
-        console.error("Error during Google Cloud Vision OAuth2 exchange:", err);
-        return null;
     }
 }
 
@@ -184,13 +136,22 @@ export async function POST(request: NextRequest) {
             }, { status: 500 });
         }
 
-        let rawText = '';
+        const genAI = new GoogleGenerativeAI(geminiKey);
+        const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
         if (transcript) {
-            rawText = transcript;
+            // ---- TEXT/VOICE TRANSCRIPT PATH ----
             console.log('OCR - Processing voice transcript directly');
+            const prompt = TEXT_STRUCTURING_PROMPT.replace('[RAW_TEXT]', transcript);
+            const result = await model.generateContent(prompt);
+            const responseText = result.response.text();
+            console.log('OCR - Gemini text response:', responseText);
+
+            const parsedData = parseGeminiResponse(responseText, transcript);
+            return NextResponse.json({ data: [parsedData] });
+
         } else {
-            // Process images with Google Cloud Vision API
+            // ---- IMAGE PATH (Gemini Vision - reads image + structures in one call) ----
             let base64Data = base64Image;
             let mimeType = "image/jpeg";
 
@@ -224,74 +185,26 @@ export async function POST(request: NextRequest) {
                 return NextResponse.json({ error: "No image or transcript data provided" }, { status: 400 });
             }
 
-            const visionApiKey = process.env.GOOGLE_CLOUD_VISION_KEY;
-            let visionUrl = `https://vision.googleapis.com/v1/images:annotate`;
-            const headers: Record<string, string> = {
-                "Content-Type": "application/json",
-            };
+            console.log('OCR - Sending image to Gemini Vision for OCR + structuring...');
+            console.log('OCR - Image base64 length:', base64Data.length, 'mimeType:', mimeType);
 
-            // 1. Try Service Account first (OAuth2 token exchange)
-            const accessToken = await getGoogleVisionAccessToken();
-            if (accessToken) {
-                console.log("OCR - Authenticating using Google Service Account OAuth2 Access Token");
-                headers["Authorization"] = `Bearer ${accessToken}`;
-            } else if (visionApiKey) {
-                // 2. Fallback to API Key if Service Account not configured
-                console.log("OCR - Using GOOGLE_CLOUD_VISION_KEY API key");
-                visionUrl += `?key=${visionApiKey}`;
-            } else {
-                console.error("OCR Error - No Google Cloud Vision credentials configured (neither API key nor service account)");
-                return NextResponse.json({ 
-                    error: "Google Cloud Vision credentials not configured on server. Please contact administrator." 
-                }, { status: 500 });
-            }
+            // Send image directly to Gemini — it reads the text AND structures it in one call
+            const result = await model.generateContent([
+                IMAGE_OCR_PROMPT,
+                {
+                    inlineData: {
+                        data: base64Data,
+                        mimeType: mimeType,
+                    },
+                },
+            ]);
 
-            console.log('OCR - Calling Google Cloud Vision API...');
-            const visionResponse = await fetch(visionUrl, {
-                method: 'POST',
-                headers: headers,
-                body: JSON.stringify({
-                    requests: [
-                        {
-                            image: {
-                                content: base64Data,
-                            },
-                            features: [
-                                {
-                                    type: "TEXT_DETECTION",
-                                },
-                            ],
-                        },
-                    ],
-                }),
-            });
+            const responseText = result.response.text();
+            console.log('OCR - Gemini Vision response:', responseText);
 
-            if (!visionResponse.ok) {
-                const errText = await visionResponse.text();
-                console.error('Google Vision API Error:', errText);
-                let message = "Google Vision API request failed";
-                try {
-                    const parsedErr = JSON.parse(errText);
-                    if (parsedErr.error?.message) {
-                        message = parsedErr.error.message;
-                    }
-                } catch (_) {}
-                return NextResponse.json({ error: message }, { status: visionResponse.status });
-            }
-
-            const visionData = await visionResponse.json();
-            rawText = visionData.responses?.[0]?.fullTextAnnotation?.text || '';
-            console.log('Google Vision API successfully extracted text, length:', rawText.length);
+            const parsedData = parseGeminiResponse(responseText, 'Image OCR via Gemini Vision');
+            return NextResponse.json({ data: [parsedData] });
         }
-
-        if (!rawText || !rawText.trim()) {
-            console.log('OCR - No text detected in image or empty transcript');
-            return NextResponse.json({ data: [FALLBACK_RESPONSE] });
-        }
-
-        // Structure the raw extracted text using Gemini
-        const parsedData = await structureTextWithGemini(rawText, geminiKey);
-        return NextResponse.json({ data: [parsedData] });
 
     } catch (error) {
         if (error instanceof z.ZodError) {
