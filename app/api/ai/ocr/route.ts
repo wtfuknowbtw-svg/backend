@@ -230,26 +230,20 @@ export async function POST(request: NextRequest) {
                 "Content-Type": "application/json",
             };
 
-            if (visionApiKey && visionApiKey !== "AIzaSyA77ittfjA0yF7HjZMoPHx-CDA7oLpqVws") {
-                // If a custom API key is supplied, use it
-                console.log("OCR - Using custom GOOGLE_CLOUD_VISION_KEY API key");
+            // 1. Try Service Account first (OAuth2 token exchange)
+            const accessToken = await getGoogleVisionAccessToken();
+            if (accessToken) {
+                console.log("OCR - Authenticating using Google Service Account OAuth2 Access Token");
+                headers["Authorization"] = `Bearer ${accessToken}`;
+            } else if (visionApiKey) {
+                // 2. Fallback to API Key if Service Account not configured
+                console.log("OCR - Using GOOGLE_CLOUD_VISION_KEY API key");
                 visionUrl += `?key=${visionApiKey}`;
             } else {
-                // Otherwise, try to use the Service Account to generate an Access Token
-                const accessToken = await getGoogleVisionAccessToken();
-                if (accessToken) {
-                    console.log("OCR - Authenticating using Google Service Account OAuth2 Access Token");
-                    headers["Authorization"] = `Bearer ${accessToken}`;
-                } else if (visionApiKey) {
-                    // Fallback to the env API key if service account credentials are not configured
-                    console.log("OCR - Service account not found, falling back to GOOGLE_CLOUD_VISION_KEY");
-                    visionUrl += `?key=${visionApiKey}`;
-                } else {
-                    console.error("OCR Error - No credentials found (neither API key nor service account)");
-                    return NextResponse.json({ 
-                        error: "Google Cloud Vision credentials not configured on server. Please contact administrator." 
-                    }, { status: 500 });
-                }
+                console.error("OCR Error - No Google Cloud Vision credentials configured (neither API key nor service account)");
+                return NextResponse.json({ 
+                    error: "Google Cloud Vision credentials not configured on server. Please contact administrator." 
+                }, { status: 500 });
             }
 
             console.log('OCR - Calling Google Cloud Vision API...');
