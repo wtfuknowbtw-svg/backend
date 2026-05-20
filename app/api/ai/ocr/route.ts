@@ -269,7 +269,14 @@ export async function POST(request: NextRequest) {
             if (!visionResponse.ok) {
                 const errText = await visionResponse.text();
                 console.error('Google Vision API Error:', errText);
-                return NextResponse.json({ error: "Google Vision API request failed" }, { status: visionResponse.status });
+                let message = "Google Vision API request failed";
+                try {
+                    const parsedErr = JSON.parse(errText);
+                    if (parsedErr.error?.message) {
+                        message = parsedErr.error.message;
+                    }
+                } catch (_) {}
+                return NextResponse.json({ error: message }, { status: visionResponse.status });
             }
 
             const visionData = await visionResponse.json();
