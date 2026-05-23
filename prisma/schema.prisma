@@ -21,6 +21,7 @@ model Business {
   transactions Transaction[]
   customers    Customer[]
   subscription Subscription?
+  purchases    Purchase[]
 }
 
 model Customer {
@@ -71,6 +72,22 @@ model Subscription {
   updatedAt               DateTime @default(now()) @updatedAt
   
   business Business @relation(fields: [businessId], references: [id])
+}
+
+model Purchase {
+  id            String   @id @default(cuid())
+  businessId    String
+  business      Business @relation(fields: [businessId], references: [id])
+  supplierName  String?
+  itemName      String
+  quantity      Float
+  unit          String?
+  costPrice     Float
+  totalCost     Float
+  date          DateTime @default(now())
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
 
 model Otp {
