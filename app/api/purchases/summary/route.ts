@@ -44,45 +44,185 @@ export async function GET(request: NextRequest) {
       },
     });
 
+    // Get unit conversions for this business
+    const unitConversions = await prisma.unitConversion.findMany({
+      where: { businessId },
+    });
+
+    // Build conversion lookup: "fromUnit->toUnit" => multiplier
+    const conversionMap = new Map<string, { multiplier: number; fromUnit: string; toUnit: string }>();
+    unitConversions.forEach((uc) => {
+      conversionMap.set(`${uc.fromUnit}->${uc.toUnit}`, {
+        multiplier: uc.multiplier,
+        fromUnit: uc.fromUnit,
+        toUnit: uc.toUnit,
+      });
+      // Also store reverse conversion
+      if (uc.multiplier > 0) {
+        conversionMap.set(`${uc.toUnit}->${uc.fromUnit}`, {
+          multiplier: 1 / uc.multiplier,
+          fromUnit: uc.toUnit,
+          toUnit: uc.fromUnit,
+        });
+      }
+    });
+
     // Calculate totals
     const totalPurchaseCost = purchases.reduce((sum, p) => sum + p.totalCost, 0);
     const totalSalesRevenue = sales.reduce((sum, s) => sum + s.price, 0);
     const profitLoss = totalSalesRevenue - totalPurchaseCost;
 
-    // Calculate item-wise summary
-    const itemMap = new Map<string, { bought: number; sold: number; unit: string }>();
+    // Build item-wise tracking with conversion support
+    interface ItemData {
+      purchasedQty: number;
+      purchasedUnit: string;
+      purchasedCost: number;
+      soldQty: number;
+      soldUnit: string;
+      soldRevenue: number;
+    }
+
+    const itemMap = new Map<string, ItemData>();
 
     // Add purchases to map
     purchases.forEach((purchase) => {
       const key = purchase.itemName.toLowerCase();
-      const existing = itemMap.get(key) || { bought: 0, sold: 0, unit: purchase.unit || '' };
-      itemMap.set(key, {
-        bought: existing.bought + purchase.quantity,
-        sold: existing.sold,
-        unit: purchase.unit || existing.unit,
-      });
+      const existing = itemMap.get(key);
+      if (existing) {
+        existing.purchasedQty += purchase.quantity;
+        existing.purchasedCost += purchase.totalCost;
+        if (!existing.purchasedUnit && purchase.unit) {
+          existing.purchasedUnit = purchase.unit.toLowerCase();
+        }
+      } else {
+        itemMap.set(key, {
+          purchasedQty: purchase.quantity,
+          purchasedUnit: (purchase.unit || '').toLowerCase(),
+          purchasedCost: purchase.totalCost,
+          soldQty: 0,
+          soldUnit: '',
+          soldRevenue: 0,
+        });
+      }
     });
 
     // Add sales to map
     sales.forEach((sale) => {
       if (sale.itemName) {
         const key = sale.itemName.toLowerCase();
-        const existing = itemMap.get(key) || { bought: 0, sold: 0, unit: sale.unit || '' };
-        itemMap.set(key, {
-          bought: existing.bought,
-          sold: existing.sold + (sale.quantity || 0),
-          unit: sale.unit || existing.unit,
-        });
+        const existing = itemMap.get(key);
+        if (existing) {
+          existing.soldQty += sale.quantity || 0;
+          existing.soldRevenue += sale.price;
+          if (!existing.soldUnit && sale.unit) {
+            existing.soldUnit = sale.unit.toLowerCase();
+          }
+        } else {
+          itemMap.set(key, {
+            purchasedQty: 0,
+            purchasedUnit: '',
+            purchasedCost: 0,
+            soldQty: sale.quantity || 0,
+            soldUnit: (sale.unit || '').toLowerCase(),
+            soldRevenue: sale.price,
+          });
+        }
       }
     });
 
-    // Convert map to array
+    // Helper: try to find a conversion between two units
+    const tryConvert = (fromUnit: string, toUnit: string, qty: number): {
+      converted: boolean;
+      convertedQty: number;
+      conversionUsed: string;
+    } => {
+      if (!fromUnit || !toUnit) {
+        return { converted: false, convertedQty: qty, conversionUsed: '' };
+      }
+
+      const key = `${fromUnit}->${toUnit}`;
+      const conv = conversionMap.get(key);
+      if (conv) {
+        return {
+          converted: true,
+          convertedQty: qty * conv.multiplier,
+          conversionUsed: `1 ${conv.fromUnit} = ${conv.multiplier} ${conv.toUnit}`,
+        };
+      }
+
+      return { converted: false, convertedQty: qty, conversionUsed: '' };
+    };
+
+    // Convert map to enriched item-wise tracking
+    const itemWiseTracking = Array.from(itemMap.entries()).map(([itemName, data]) => {
+      const purchasedUnit = data.purchasedUnit;
+      const soldUnit = data.soldUnit;
+
+      let convertedQuantity = data.purchasedQty;
+      let convertedUnit = purchasedUnit;
+      let unitMismatch = false;
+      let conversionUsed = '';
+      let remaining = 0;
+      let remainingUnit = '';
+      let isMissing = false;
+      let missingQuantity = 0;
+
+      if (purchasedUnit && soldUnit && purchasedUnit !== soldUnit) {
+        // Units differ — try to convert purchased to sold unit
+        const result = tryConvert(purchasedUnit, soldUnit, data.purchasedQty);
+        if (result.converted) {
+          convertedQuantity = result.convertedQty;
+          convertedUnit = soldUnit;
+          conversionUsed = result.conversionUsed;
+          remaining = convertedQuantity - data.soldQty;
+          remainingUnit = soldUnit;
+        } else {
+          // No conversion found
+          unitMismatch = true;
+          remaining = data.purchasedQty - data.soldQty;
+          remainingUnit = purchasedUnit || soldUnit || '';
+        }
+      } else {
+        // Units match or one is missing — compare directly
+        remaining = data.purchasedQty - data.soldQty;
+        remainingUnit = purchasedUnit || soldUnit || '';
+      }
+
+      if (remaining < 0) {
+        isMissing = true;
+        missingQuantity = Math.abs(remaining);
+      }
+
+      return {
+        itemName,
+        purchased: {
+          quantity: data.purchasedQty,
+          unit: purchasedUnit,
+          cost: data.purchasedCost,
+          convertedQuantity,
+          convertedUnit,
+        },
+        sold: {
+          quantity: data.soldQty,
+          unit: soldUnit,
+          revenue: data.soldRevenue,
+        },
+        remaining,
+        remainingUnit,
+        isMissing,
+        missingQuantity,
+        unitMismatch,
+        conversionUsed,
+      };
+    });
+
+    // Also provide legacy itemWiseSummary for backward compatibility
     const itemWiseSummary = Array.from(itemMap.entries()).map(([itemName, data]) => ({
       itemName,
-      totalBought: data.bought,
-      totalSold: data.sold,
-      difference: data.bought - data.sold,
-      unit: data.unit,
+      totalBought: data.purchasedQty,
+      totalSold: data.soldQty,
+      difference: data.purchasedQty - data.soldQty,
+      unit: data.purchasedUnit || data.soldUnit || '',
     }));
 
     return NextResponse.json({
@@ -91,6 +231,7 @@ export async function GET(request: NextRequest) {
         totalSalesRevenue,
         profitLoss,
         itemWiseSummary,
+        itemWiseTracking,
       },
     });
   } catch (error) {
