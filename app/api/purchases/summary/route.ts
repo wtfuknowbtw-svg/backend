@@ -82,11 +82,116 @@ export async function GET(request: NextRequest) {
       soldRevenue: number;
     }
 
+    // Helper to get normalized, clean string
+    const cleanName = (name: string): string => {
+      return name.trim().toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ');
+    };
+
+    // Bilingual Kirana Synonym sets
+    const SYNONYM_SETS = [
+      ['rice', 'chawal', 'bhaat', 'indrani rice', 'jeera rice', 'basmati rice'],
+      ['sugar', 'shakhar', 'shakar', 'chini'],
+      ['milk', 'doodh', 'dudh', 'dairy'],
+      ['oil', 'tel', 'oil bags', 'cooking oil'],
+      ['potato', 'batata', 'aloo'],
+      ['onion', 'kanda', 'pyaz'],
+      ['wheat', 'atta', 'gehu', 'flour', 'wheat flour'],
+      ['soap', 'sabun', 'detergent', 'surf excel', 'rin'],
+      ['salt', 'namak', 'mith'],
+      ['water', 'pani', 'bisleri'],
+      ['egg', 'anda'],
+      ['bread', 'pav', 'paav'],
+      ['tea', 'chai', 'cha']
+    ];
+
+    const getSynonymGroup = (name: string): string | null => {
+      const cleaned = cleanName(name);
+      for (const set of SYNONYM_SETS) {
+        if (set.some(syn => cleaned.includes(syn) || syn.includes(cleaned))) {
+          return set[0];
+        }
+      }
+      return null;
+    };
+
+    // Levenshtein Distance for typo matching
+    const getLevenshteinDistance = (a: string, b: string): number => {
+      const matrix = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0));
+      for (let i = 0; i <= a.length; i++) matrix[i][0] = i;
+      for (let j = 0; j <= b.length; j++) matrix[0][j] = j;
+
+      for (let i = 1; i <= a.length; i++) {
+        for (let j = 1; j <= b.length; j++) {
+          const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+          matrix[i][j] = Math.min(
+            matrix[i - 1][j] + 1,
+            matrix[i][j - 1] + 1,
+            matrix[i - 1][j - 1] + cost
+          );
+        }
+      }
+      return matrix[a.length][b.length];
+    };
+
+    // Keep track of normalized groups
+    const keyCache = new Map<string, string>();
+    const originalNames = new Map<string, string>(); // maps canonical key to best original display name
+
+    const getCanonicalKey = (rawName: string): string => {
+      const cleaned = cleanName(rawName);
+      if (!cleaned) return 'unknown';
+
+      // 1. Check synonym dictionary
+      const synGroup = getSynonymGroup(cleaned);
+      if (synGroup) {
+        if (!originalNames.has(synGroup)) {
+          originalNames.set(synGroup, rawName);
+        } else {
+          const currentBest = originalNames.get(synGroup)!;
+          if (rawName.length > currentBest.length) {
+            originalNames.set(synGroup, rawName);
+          }
+        }
+        return synGroup;
+      }
+
+      // 2. Check existing keys in cache
+      for (const [cachedRaw, canonical] of Array.from(keyCache.entries())) {
+        // A. Substring / contains match (length >= 4)
+        if (cleaned.length >= 4 && cachedRaw.length >= 4) {
+          if (cleaned.includes(cachedRaw) || cachedRaw.includes(cleaned)) {
+            const currentBest = originalNames.get(canonical)!;
+            if (rawName.length > currentBest.length) {
+              originalNames.set(canonical, rawName);
+            }
+            return canonical;
+          }
+        }
+
+        // B. Fuzzy Levenshtein match (distance <= 2 for words >= 5 letters)
+        if (cleaned.length >= 5 && cachedRaw.length >= 5) {
+          const dist = getLevenshteinDistance(cleaned, cachedRaw);
+          if (dist <= 2) {
+            const currentBest = originalNames.get(canonical)!;
+            if (rawName.length > currentBest.length) {
+              originalNames.set(canonical, rawName);
+            }
+            return canonical;
+          }
+        }
+      }
+
+      // 3. New unique key group
+      keyCache.set(cleaned, cleaned);
+      originalNames.set(cleaned, rawName);
+      return cleaned;
+    };
+
     const itemMap = new Map<string, ItemData>();
 
     // Add purchases to map
     purchases.forEach((purchase) => {
-      const key = purchase.itemName.toLowerCase();
+      const key = getCanonicalKey(purchase.itemName);
       const existing = itemMap.get(key);
       if (existing) {
         existing.purchasedQty += purchase.quantity;
@@ -109,7 +214,7 @@ export async function GET(request: NextRequest) {
     // Add sales to map
     sales.forEach((sale) => {
       if (sale.itemName) {
-        const key = sale.itemName.toLowerCase();
+        const key = getCanonicalKey(sale.itemName);
         const existing = itemMap.get(key);
         if (existing) {
           existing.soldQty += sale.quantity || 0;
@@ -154,7 +259,8 @@ export async function GET(request: NextRequest) {
     };
 
     // Convert map to enriched item-wise tracking
-    const itemWiseTracking = Array.from(itemMap.entries()).map(([itemName, data]) => {
+    const itemWiseTracking = Array.from(itemMap.entries()).map(([key, data]) => {
+      const itemName = originalNames.get(key) || key;
       const purchasedUnit = data.purchasedUnit;
       const soldUnit = data.soldUnit;
 
@@ -217,8 +323,8 @@ export async function GET(request: NextRequest) {
     });
 
     // Also provide legacy itemWiseSummary for backward compatibility
-    const itemWiseSummary = Array.from(itemMap.entries()).map(([itemName, data]) => ({
-      itemName,
+    const itemWiseSummary = Array.from(itemMap.entries()).map(([key, data]) => ({
+      itemName: originalNames.get(key) || key,
       totalBought: data.purchasedQty,
       totalSold: data.soldQty,
       difference: data.purchasedQty - data.soldQty,
