@@ -24,6 +24,9 @@ model Business {
   purchases       Purchase[]
   unitConversions UnitConversion[]
   wholesalePurchases WholesalePurchase[]
+  // Existing fields remain unchanged
+  invoices       Invoice[]
+  invoiceCounter Int @default(0)
 }
 
 model Customer {
@@ -124,4 +127,33 @@ model WholesalePurchase {
   purchaseDate DateTime @default(now())
   createdAt    DateTime @default(now())
   business     Business @relation(fields: [businessId], references: [id])
+}
+
+model Invoice {
+  id             String   @id @default(cuid())
+  invoiceNumber  String    // e.g. "INV-2026-001"
+  businessId     String
+  customerName   String
+  customerPhone  String?
+  customerAddress String?
+  items          InvoiceItem[]
+  subtotal       Float
+  gstRate        Float
+  gstAmount      Float
+  totalAmount    Float
+  notes          String?
+  invoiceDate    DateTime @default(now())
+  createdAt      DateTime @default(now())
+  business       Business @relation(fields: [businessId], references: [id])
+}
+
+model InvoiceItem {
+  id          String   @id @default(cuid())
+  invoiceId   String
+  itemName    String
+  quantity    Float
+  unit        String
+  pricePerUnit Float
+  totalPrice  Float
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 }
