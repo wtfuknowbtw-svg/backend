@@ -23,6 +23,7 @@ model Business {
   subscription    Subscription?
   purchases       Purchase[]
   unitConversions UnitConversion[]
+  wholesalePurchases WholesalePurchase[]
 }
 
 model Customer {
@@ -110,4 +111,17 @@ model UnitConversion {
   updatedAt  DateTime @updatedAt
 
   @@unique([businessId, fromUnit, toUnit])
+}
+
+model WholesalePurchase {
+  id           String   @id @default(cuid())
+  businessId   String
+  itemName     String
+  quantity     Float
+  unit         String   // e.g. "kg", "bag", "carton", "piece", "litre"
+  totalPrice   Float    // total amount paid, in rupees
+  supplierName String?  // optional, name of wholesale supplier
+  purchaseDate DateTime @default(now())
+  createdAt    DateTime @default(now())
+  business     Business @relation(fields: [businessId], references: [id])
 }
