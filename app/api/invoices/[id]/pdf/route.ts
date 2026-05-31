@@ -12,7 +12,6 @@ export async function GET(
   if (!user) {
     return unauthorizedResponse(error || "Unauthorized");
   }
-
   const businessId = user.businessId;
   const invoiceId = params.id;
 
@@ -127,7 +126,7 @@ export async function GET(
       font: fontBold,
       color: textMuted,
     });
-    
+
     y -= 15;
     page.drawText(invoice.customerName, {
       x: 50,
@@ -161,7 +160,7 @@ export async function GET(
 
     // Right: Invoice Metadata (reset y temporarily for right column)
     let metaY = y + (invoice.customerPhone ? 15 : 0) + (invoice.customerAddress ? 15 : 0);
-    
+
     const invNumText = `Invoice #: ${invoice.invoiceNumber}`;
     const invNumWidth = fontBold.widthOfTextAtSize(invNumText, 11);
     page.drawText(invNumText, {
@@ -223,7 +222,7 @@ export async function GET(
       }
 
       page.drawText(String(index + 1), { x: 60, y, size: 9, font: fontRegular, color: textDark });
-      
+
       // Limit item name size to prevent overflow
       let name = item.itemName;
       if (name.length > 25) name = name.substring(0, 22) + "...";
@@ -231,7 +230,7 @@ export async function GET(
 
       page.drawText(item.quantity.toString(), { x: 260, y, size: 9, font: fontRegular, color: textDark });
       page.drawText(item.unit, { x: 310, y, size: 9, font: fontRegular, color: textDark });
-      
+
       const priceText = `Rs. ${item.pricePerUnit.toFixed(2)}`;
       page.drawText(priceText, { x: 370, y, size: 9, font: fontRegular, color: textDark });
 
