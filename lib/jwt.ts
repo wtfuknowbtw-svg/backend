@@ -1,7 +1,7 @@
 import jwt, { Secret, SignOptions } from 'jsonwebtoken';
 
 const JWT_SECRET: Secret = process.env.JWT_SECRET || 'fallback-secret-change-in-production';
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '365d';
 
 export interface JWTPayload {
     businessId: string;
