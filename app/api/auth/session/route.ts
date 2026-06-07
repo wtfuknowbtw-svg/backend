@@ -64,6 +64,14 @@ export async function POST(request: Request) {
             );
         }
         console.error('[auth/session] Error:', error);
-        return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorCode = (error as any)?.code;
+        const errorMeta = (error as any)?.meta;
+        return NextResponse.json({ 
+            error: 'Internal Server Error', 
+            message: errorMessage,
+            code: errorCode,
+            meta: errorMeta,
+        }, { status: 500 });
     }
 }
